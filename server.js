@@ -3,12 +3,14 @@ import Anthropic from "@anthropic-ai/sdk";
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
+import cors from "cors";
 
 dotenv.config();
 
 const app = express();
 const port = 3106;
 
+app.use(cors());
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY
 });
