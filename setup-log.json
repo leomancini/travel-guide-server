@@ -1,0 +1,9 @@
+{
+  "service_id": "travel-guide-server",
+  "service_name": "Travel Guide Server",
+  "domain": "https://travel-guide-server.noshado.ws",
+  "host": "localhost",
+  "port": "3106",
+  "author": "leo",
+  "created_on": "Wed 11 Dec 2024 12:23:19 AM EST"
+}
