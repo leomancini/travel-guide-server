@@ -15,6 +15,8 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY
 });
 
+let model = "claude-3-5-sonnet-20241022";
+
 const getWikiImage = async (query, size = "1024px") => {
   const wikiResponse = await fetch(
     `https://en.wikipedia.org/w/rest.php/v1/search/page?format=json&q=${query}`,
@@ -54,22 +56,20 @@ app.get("/", async (req, res) => {
     res.json(existingGuide);
   } else {
     const response = await anthropic.messages.create({
-      model: "claude-3-5-sonnet-20241022",
+      model,
       max_tokens: 1024,
       system: `Always respond with JSON following this schema:
-      [
-        {
-          "name": string,
-          "description": string,
-          "tags": string[]
-        },
-        {
-          "name": string,
-          "description": string,
-          "tags": string[]
-        },
-        ...
-      ]`,
+      {
+        formattedCityName: string_as_title_case,
+        attractions: [
+          {
+            name: string,
+            description: string,
+            tags: string[]
+          },
+          ...
+        ]
+      }`,
       messages: [
         {
           role: "user",
@@ -78,7 +78,8 @@ app.get("/", async (req, res) => {
       ]
     });
 
-    const attractions = JSON.parse(response.content[0].text);
+    const data = JSON.parse(response.content[0].text);
+    const { formattedCityName, attractions } = data;
 
     const attractionsWithImages = await Promise.all(
       attractions.map(async (attraction) => {
@@ -94,9 +95,10 @@ app.get("/", async (req, res) => {
 
     const guide = {
       metadata: {
-        city,
+        city: formattedCityName,
         flavor,
-        createdAt: new Date().toISOString()
+        createdAt: new Date(),
+        model
       },
       attractions: attractionsWithImages
     };
