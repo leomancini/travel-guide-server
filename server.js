@@ -15,6 +15,25 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY
 });
 
+const getWikiImage = async (query, size = "1024px") => {
+  const wikiResponse = await fetch(
+    `https://en.wikipedia.org/w/rest.php/v1/search/page?format=json&q=${query}`,
+    {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept:
+          "application/json,text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5"
+      }
+    }
+  );
+
+  const wikiData = await wikiResponse.json();
+
+  return wikiData.pages?.[0]?.thumbnail?.url?.replace(/60px/, size) || null;
+};
+
 app.get("/", async (req, res) => {
   const { city, flavor } = req.query;
 
@@ -59,34 +78,30 @@ app.get("/", async (req, res) => {
       ]
     });
 
-    const newGuide = JSON.parse(response.content[0].text);
+    const attractions = JSON.parse(response.content[0].text);
 
-    const newGuideWithImages = await Promise.all(
-      newGuide.map(async (attraction) => {
+    const attractionsWithImages = await Promise.all(
+      attractions.map(async (attraction) => {
         const query = encodeURIComponent(`${attraction.name} ${city}`);
-        const wikiResponse = await fetch(
-          `https://en.wikipedia.org/w/rest.php/v1/search/page?format=json&q=${query}`,
-          {
-            headers: {
-              "User-Agent":
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              Accept:
-                "application/json,text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-              "Accept-Language": "en-US,en;q=0.5"
-            }
-          }
-        );
-
-        const wikiData = await wikiResponse.json();
+        const image = await getWikiImage(query);
 
         return {
           ...attraction,
-          image:
-            wikiData.pages?.[0]?.thumbnail?.url?.replace(/60px/, "1024px") ||
-            null
+          image
         };
       })
     );
+
+    const guide = {
+      metadata: {
+        city,
+        flavor,
+        createdAt: new Date().toISOString()
+      },
+      attractions: attractionsWithImages
+    };
+
+    guide.metadata.headerImage = await getWikiImage(city, "1024px");
 
     if (!fs.existsSync("./guides")) {
       fs.mkdirSync("./guides");
@@ -94,10 +109,10 @@ app.get("/", async (req, res) => {
 
     fs.writeFileSync(
       path.join("./guides", filename),
-      JSON.stringify(newGuideWithImages, null, 2)
+      JSON.stringify(guide, null, 2)
     );
 
-    res.json(newGuideWithImages);
+    res.json(guide);
   }
 });
 
