@@ -17,6 +17,36 @@ const anthropic = new Anthropic({
 
 let model = "claude-3-5-sonnet-20241022";
 
+const getClaudeResponse = async (city, flavor) => {
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 1024,
+    system: `Always respond with JSON following this schema:
+    {
+      formattedCityName: string_as_title_case,
+      emojiForCity: string,
+      attractions: [
+        {
+          name: string,
+          description: string,
+          tags: string[]
+        },
+        ...
+      ]
+    }`,
+    messages: [
+      {
+        role: "user",
+        content: `What are the top 10 attractions in ${city}, be very ${flavor}`
+      }
+    ]
+  });
+
+  const data = JSON.parse(response.content[0].text);
+
+  return data;
+};
+
 const getWikiImage = async (query, size = "1024px") => {
   const wikiResponse = await fetch(
     `https://en.wikipedia.org/w/rest.php/v1/search/page?format=json&q=${query}`,
@@ -55,31 +85,9 @@ app.get("/", async (req, res) => {
     const existingGuide = JSON.parse(fs.readFileSync(guidePath, "utf8"));
     res.json(existingGuide);
   } else {
-    const response = await anthropic.messages.create({
-      model,
-      max_tokens: 1024,
-      system: `Always respond with JSON following this schema:
-      {
-        formattedCityName: string_as_title_case,
-        attractions: [
-          {
-            name: string,
-            description: string,
-            tags: string[]
-          },
-          ...
-        ]
-      }`,
-      messages: [
-        {
-          role: "user",
-          content: `What are the top 10 attractions in ${city}, be very ${flavor}`
-        }
-      ]
-    });
+    const data = await getClaudeResponse(city, flavor);
 
-    const data = JSON.parse(response.content[0].text);
-    const { formattedCityName, attractions } = data;
+    const { formattedCityName, emojiForCity, attractions } = data;
 
     const attractionsWithImages = await Promise.all(
       attractions.map(async (attraction) => {
@@ -96,6 +104,7 @@ app.get("/", async (req, res) => {
     const guide = {
       metadata: {
         city: formattedCityName,
+        emoji: emojiForCity,
         flavor,
         createdAt: new Date(),
         model
