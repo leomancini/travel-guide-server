@@ -47,7 +47,7 @@ const getClaudeResponse = async (city, flavor) => {
   return data;
 };
 
-const getWikiImage = async (query, size = "1024px") => {
+const getWikiData = async (query, size = "1024px") => {
   const wikiResponse = await fetch(
     `https://en.wikipedia.org/w/rest.php/v1/search/page?format=json&q=${query}`,
     {
@@ -63,7 +63,19 @@ const getWikiImage = async (query, size = "1024px") => {
 
   const wikiData = await wikiResponse.json();
 
-  return wikiData.pages?.[0]?.thumbnail?.url?.replace(/60px/, size) || null;
+  const wikiPage = wikiData.pages?.[0];
+
+  if (!wikiData?.pages || !wikiPage) {
+    return {
+      image: null,
+      wikipediaId: null
+    };
+  }
+
+  return {
+    image: wikiPage.thumbnail?.url?.replace(/60px/, size) || null,
+    wikipediaId: wikiPage.id || null
+  };
 };
 
 app.get("/", async (req, res) => {
@@ -92,11 +104,12 @@ app.get("/", async (req, res) => {
     const attractionsWithImages = await Promise.all(
       attractions.map(async (attraction) => {
         const query = encodeURIComponent(`${attraction.name} ${city}`);
-        const image = await getWikiImage(query);
+        const { image, wikipediaId } = await getWikiData(query);
 
         return {
           ...attraction,
-          image
+          image,
+          wikipediaId
         };
       })
     );
@@ -112,7 +125,9 @@ app.get("/", async (req, res) => {
       attractions: attractionsWithImages
     };
 
-    guide.metadata.headerImage = await getWikiImage(city, "1024px");
+    const { image } = await getWikiData(city, "1024px");
+
+    guide.metadata.headerImage = image;
 
     if (!fs.existsSync("./guides")) {
       fs.mkdirSync("./guides");
