@@ -1,5 +1,8 @@
 import express from "express";
 import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
+import { zodTextFormat } from "openai/helpers/zod";
+import { z } from "zod";
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
@@ -15,9 +18,26 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY
 });
 
-let model = "claude-3-5-sonnet-20241022";
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+// Zod schema for structured output
+const TravelGuideSchema = z.object({
+  formattedCityName: z.string(),
+  emojiForCity: z.string(),
+  attractions: z.array(
+    z.object({
+      name: z.string(),
+      description: z.string(),
+      tags: z.array(z.string())
+    })
+  )
+});
 
 const getClaudeResponse = async (city, flavor) => {
+  let model = "claude-3-5-sonnet";
+
   const response = await anthropic.messages.create({
     model,
     max_tokens: 1024,
@@ -44,7 +64,27 @@ const getClaudeResponse = async (city, flavor) => {
 
   const data = JSON.parse(response.content[0].text);
 
-  return data;
+  return { ...data, model };
+};
+
+const getGPTResponse = async (city, flavor) => {
+  let model = "gpt-4o-mini";
+  const response = await openai.responses.parse({
+    model,
+    input: [
+      {
+        role: "user",
+        content: `What are the top 10 attractions in ${city}, be very ${flavor}`
+      }
+    ],
+    text: {
+      format: zodTextFormat(TravelGuideSchema, "travel_guide")
+    }
+  });
+
+  const data = response.output_parsed;
+
+  return { ...data, model };
 };
 
 const getWikiData = async (query, size = "1024px") => {
@@ -97,48 +137,102 @@ app.get("/", async (req, res) => {
     const existingGuide = JSON.parse(fs.readFileSync(guidePath, "utf8"));
     res.json(existingGuide);
   } else {
-    const data = await getClaudeResponse(city, flavor);
+    try {
+      const data = await getGPTResponse(city, flavor);
 
-    const { formattedCityName, emojiForCity, attractions } = data;
+      const { formattedCityName, emojiForCity, attractions, model } = data;
 
-    const attractionsWithImages = await Promise.all(
-      attractions.map(async (attraction) => {
-        const query = encodeURIComponent(`${attraction.name} ${city}`);
-        const { image, wikipediaId } = await getWikiData(query);
+      const attractionsWithImages = await Promise.all(
+        attractions.map(async (attraction) => {
+          const query = encodeURIComponent(`${attraction.name} ${city}`);
+          const { image, wikipediaId } = await getWikiData(query);
 
-        return {
-          ...attraction,
-          image,
-          wikipediaId
+          return {
+            ...attraction,
+            image,
+            wikipediaId
+          };
+        })
+      );
+
+      const guide = {
+        metadata: {
+          city: formattedCityName,
+          emoji: emojiForCity,
+          flavor,
+          createdAt: new Date(),
+          model
+        },
+        attractions: attractionsWithImages
+      };
+
+      const { image } = await getWikiData(city, "1024px");
+
+      guide.metadata.headerImage = image;
+
+      if (!fs.existsSync("./guides")) {
+        fs.mkdirSync("./guides");
+      }
+
+      fs.writeFileSync(
+        path.join("./guides", filename),
+        JSON.stringify(guide, null, 2)
+      );
+
+      res.json(guide);
+    } catch (error) {
+      console.error("Error fetching guide:", error);
+      try {
+        const data = await getGPTResponse(city, flavor);
+
+        const { formattedCityName, emojiForCity, attractions, model } = data;
+
+        const attractionsWithImages = await Promise.all(
+          attractions.map(async (attraction) => {
+            const query = encodeURIComponent(`${attraction.name} ${city}`);
+            const { image, wikipediaId } = await getWikiData(query);
+
+            return {
+              ...attraction,
+              image,
+              wikipediaId
+            };
+          })
+        );
+
+        const guide = {
+          metadata: {
+            city: formattedCityName,
+            emoji: emojiForCity,
+            flavor,
+            createdAt: new Date(),
+            model
+          },
+          attractions: attractionsWithImages
         };
-      })
-    );
 
-    const guide = {
-      metadata: {
-        city: formattedCityName,
-        emoji: emojiForCity,
-        flavor,
-        createdAt: new Date(),
-        model
-      },
-      attractions: attractionsWithImages
-    };
+        const { image } = await getWikiData(city, "1024px");
 
-    const { image } = await getWikiData(city, "1024px");
+        guide.metadata.headerImage = image;
 
-    guide.metadata.headerImage = image;
+        if (!fs.existsSync("./guides")) {
+          fs.mkdirSync("./guides");
+        }
 
-    if (!fs.existsSync("./guides")) {
-      fs.mkdirSync("./guides");
+        fs.writeFileSync(
+          path.join("./guides", filename),
+          JSON.stringify(guide, null, 2)
+        );
+
+        res.json(guide);
+      } catch (gptError) {
+        console.error("Error fetching guide with GPT:", gptError);
+        res.status(500).json({
+          error: "Failed to generate guide",
+          message: "Both Claude and GPT failed to generate the guide."
+        });
+      }
     }
-
-    fs.writeFileSync(
-      path.join("./guides", filename),
-      JSON.stringify(guide, null, 2)
-    );
-
-    res.json(guide);
   }
 });
 
